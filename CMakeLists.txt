@@ -12,6 +12,11 @@ if (NOT XCODE AND NOT MSVC AND NOT CMAKE_BUILD_TYPE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
+if (__RVV_ASM_XTHEAD)
+    message(STATUS "Using inlined RVV assemble for XThead")
+    add_compile_definitions(__RVV_ASM_XTHEAD)
+endif()
+
 message("CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 
 # Add path to modules
