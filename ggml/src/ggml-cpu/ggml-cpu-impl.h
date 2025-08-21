@@ -24,6 +24,7 @@ struct ggml_compute_params {
     void * wdata;
 
     struct ggml_threadpool * threadpool;
+    bool is_prefill;
 };
 
 

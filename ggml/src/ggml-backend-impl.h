@@ -107,7 +107,7 @@ extern "C" {
         enum ggml_status          (*graph_plan_compute)(ggml_backend_t backend, ggml_backend_graph_plan_t plan);
 
         // compute graph (always async if supported by the backend)
-        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph);
+        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph, bool is_prefill);
 
         // (optional) event synchronization
         // record an event on this stream

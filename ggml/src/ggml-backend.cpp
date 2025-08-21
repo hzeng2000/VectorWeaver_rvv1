@@ -325,13 +325,13 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
 }
 
 enum ggml_status ggml_backend_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
-    enum ggml_status err = ggml_backend_graph_compute_async(backend, cgraph);
+    enum ggml_status err = ggml_backend_graph_compute_async(backend, cgraph, true);
     ggml_backend_synchronize(backend);
     return err;
 }
 
-enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
-    return backend->iface.graph_compute(backend, cgraph);
+enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph, bool is_prefill) {
+    return backend->iface.graph_compute(backend, cgraph, is_prefill);
 }
 
 bool ggml_backend_supports_op(ggml_backend_t backend, const struct ggml_tensor * op) {
@@ -618,6 +618,8 @@ struct ggml_backend_sched_split {
 struct ggml_backend_sched {
     bool is_reset; // true if the scheduler has been reset since the last graph split
     bool is_alloc;
+
+    bool is_prefill;
 
     int n_backends;
 
@@ -1393,7 +1395,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         }
 
         if (!sched->callback_eval) {
-            enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
+            enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph, sched->is_prefill);
             if (ec != GGML_STATUS_SUCCESS) {
                 return ec;
             }
@@ -1415,7 +1417,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
 
                 struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
 
-                enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv);
+                enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv, sched->is_prefill);
                 if (ec != GGML_STATUS_SUCCESS) {
                     return ec;
                 }
@@ -1571,12 +1573,13 @@ bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgra
 }
 
 enum ggml_status ggml_backend_sched_graph_compute(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
-    enum ggml_status err = ggml_backend_sched_graph_compute_async(sched, graph);
+    enum ggml_status err = ggml_backend_sched_graph_compute_async(sched, graph, true);
     ggml_backend_sched_synchronize(sched);
     return err;
 }
 
-enum ggml_status ggml_backend_sched_graph_compute_async(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
+enum ggml_status ggml_backend_sched_graph_compute_async(ggml_backend_sched_t sched, struct ggml_cgraph * graph, bool is_prefill) {
+    sched->is_prefill = is_prefill;
     if (!sched->is_reset && !sched->is_alloc) {
         ggml_backend_sched_reset(sched);
     }

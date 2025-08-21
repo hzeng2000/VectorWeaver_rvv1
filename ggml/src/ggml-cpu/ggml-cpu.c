@@ -15,6 +15,9 @@
 #include "ops.h"
 #include "ggml.h"
 
+extern void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc);
+extern void ggml_vec_dot_q8_0_q8_0_decode(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc);
+
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <malloc.h> // using malloc.h with MSC/MINGW
 #elif !defined(__FreeBSD__) && !defined(__NetBSD__) && !defined(__OpenBSD__)
@@ -1126,7 +1129,33 @@ static void ggml_compute_forward_mul_mat_one_chunk(
 
     const bool src1_cont = ggml_is_contiguous(src1);
 
-    ggml_vec_dot_t const vec_dot      = type_traits_cpu[type].vec_dot;
+    // ★★★ START OF MODIFICATION ★★★
+
+    ggml_vec_dot_t vec_dot; // Declare the function pointer.
+    const int64_t DECODE_KERNEL_THRESHOLD = 4;
+
+    if (type == GGML_TYPE_Q8_0) {
+        // 第一重判断：是否处于 Decode 阶段？
+        // if (!(params->is_prefill && ne01 <= DECODE_KERNEL_THRESHOLD)) {
+        if (!(params->is_prefill)) {
+            vec_dot = (ggml_vec_dot_t)ggml_vec_dot_q8_0_q8_0_decode;
+        }
+        else {
+            vec_dot = (ggml_vec_dot_t)ggml_vec_dot_q8_0_q8_0; // 其他所有情况，包括Prefill阶段，或者Decode阶段但矩阵很大
+        }
+
+        // 可以保留您的日志来验证选择是否符合预期
+        // printf("ne01 = %ld, is_prefill = %s, kernel = %s\n",
+        //        ne01,
+        //        params->is_prefill ? "true" : "false",
+        //        use_decode_kernel ? "decode" : "prefill");
+    } else {
+        vec_dot = type_traits_cpu[type].vec_dot;
+    }
+
+    // ★★★ END OF MODIFICATION ★★★
+
+    // ggml_vec_dot_t const vec_dot      = type_traits_cpu[type].vec_dot;
     enum ggml_type const vec_dot_type = type_traits_cpu[type].vec_dot_type;
 
     // broadcast factors
@@ -2857,6 +2886,7 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
         /*.wsize     =*/ cplan->work_size,
         /*.wdata     =*/ cplan->work_data,
         /*.threadpool=*/ tp,
+        /*.is_prefill*/  cplan->is_prefill,
     };
 
     for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) {
