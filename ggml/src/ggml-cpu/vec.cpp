@@ -251,6 +251,25 @@ void ggml_vec_silu_f32(const int n, float * y, const float * x) {
     for (; i + 3 < n; i += 4) {
         vst1q_f32(y + i, ggml_v_silu(vld1q_f32(x + i)));
     }
+#elif defined(__riscv_xtheadvector)
+    for (; i < n; ) {
+        size_t vl = __riscv_vsetvl_e32m1(n - i);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + i, vl);
+        vfloat32m1_t vneg_x = __riscv_vfneg_v_f32m1(vx, vl);
+        vfloat32m1_t vz_clamped = __riscv_vfmax_vf_f32m1(vneg_x, -87.3f, vl);
+        vz_clamped = __riscv_vfmin_vf_f32m1(vz_clamped, 88.7f, vl);
+        const float exp_alpha_f = 12102203.0f;
+        const int32_t exp_bias_i  = 1065353216;
+        vfloat32m1_t vscaled_z = __riscv_vfmul_vf_f32m1(vz_clamped, exp_alpha_f, vl);
+        vint32m1_t vint_z = __riscv_vfcvt_x_f_v_i32m1(vscaled_z, vl);
+        vint32m1_t vexp_int = __riscv_vadd_vx_i32m1(vint_z, exp_bias_i, vl);
+        vfloat32m1_t vexp_val = __riscv_vreinterpret_v_i32m1_f32m1(vexp_int);
+        const float one_f = 1.0f;
+        vfloat32m1_t vden = __riscv_vfadd_vf_f32m1(vexp_val, one_f, vl);
+        vfloat32m1_t vy = __riscv_vfdiv_vv_f32m1(vx, vden, vl);
+        __riscv_vse32_v_f32m1(y + i, vy, vl);
+        i += vl;
+    }
 #endif
     for (; i < n; ++i) {
         y[i] = ggml_silu_f32(x[i]);

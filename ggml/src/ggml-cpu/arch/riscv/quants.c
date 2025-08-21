@@ -30,7 +30,8 @@ void quantize_row_q8_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, i
 
     block_q8_0 * GGML_RESTRICT y = vy;
 
-#if defined(__riscv_v)
+// #if defined(__riscv_v)
+#if defined(__RVV_ASM_XTHEAD)
 
     size_t vl = QK8_0;
 
@@ -142,7 +143,7 @@ static inline void process_single_block_q4_q8_asm_ggml_vec_dot_q4_0_q8_0_asm_unr
 }
 
 void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
-#if defined(__riscv_v)
+#if defined(__riscv_v) || defined(__riscv_xtheadvector)
     const int qk = QK8_0;
     const int nb = n / qk;
 
@@ -192,6 +193,10 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
 
     *s = sumf;
 #elif defined(__RVV_ASM_XTHEAD)
+    UNUSED(nrc);
+    UNUSED(bx);
+    UNUSED(by);
+    UNUSED(bs);
     const int nb = n / QK8_0;
     const block_q4_0 * GGML_RESTRICT x = vx;
     const block_q8_0 * GGML_RESTRICT y = vy;
@@ -470,7 +475,7 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     int ib = 0;
     float sumf = 0;
 
-#if defined(__riscv_v)
+#if defined(__riscv_v) || defined(__riscv_xtheadvector)
     size_t vl = qk;
 
     for (; ib < nb; ++ib) {
@@ -578,7 +583,7 @@ void ggml_vec_dot_q8_0_q8_0_decode(int n, float * GGML_RESTRICT s, size_t bs, co
     int ib = 0;
     float sumf = 0;
 
-#if defined(__riscv_v)
+#if defined(__riscv_v) || defined(__riscv_xtheadvector) 
     size_t vl = qk;
 
     for (; ib < nb; ++ib) {
