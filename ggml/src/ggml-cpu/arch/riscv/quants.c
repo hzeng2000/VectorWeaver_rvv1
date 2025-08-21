@@ -115,6 +115,32 @@ void quantize_row_q8_1(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, i
 
 //===================================== Dot products =================================
 
+static inline void process_single_block_q4_q8_asm_ggml_vec_dot_q4_0_q8_0_asm_unroll2(const block_q4_0* x, const block_q8_0* y, float* sumf) {
+    int32_t sumi;
+    asm volatile(
+        "li t0, 16\n\t"
+        "th.vsetvli x0, t0, e8, m1\n\t"
+        "th.vle.v v8, (%[x_ptr])\n\t"
+        "th.vand.vi v9, v8, 15\n\t"
+        "th.vsrl.vi v8, v8, 4\n\t"
+        "th.vadd.vi v9, v9, -8\n\t"
+        "th.vadd.vi v8, v8, -8\n\t"
+        "th.vle.v v10, (%[y0_ptr])\n\t"
+        "th.vle.v v11, (%[y1_ptr])\n\t"
+        "th.vwmul.vv v12, v9, v10\n\t"
+        "th.vwmacc.vv v12, v8, v11\n\t"
+        "th.vsetvli x0, t0, e16, m2\n\t"
+        "th.vmv.s.x v16, x0\n\t"
+        "th.vwredsum.vs v16, v12, v16\n\t"
+        "th.vsetvli x0, t0, e32, m1\n\t"
+        "th.vmv.x.s %[sumi], v16\n\t"
+        : [sumi] "=r"(sumi)
+        : [x_ptr] "r"(x->qs), [y0_ptr] "r"(y->qs), [y1_ptr] "r"(y->qs + 16)
+        : "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16"
+    );
+    *sumf += (float)sumi * GGML_CPU_FP16_TO_FP32(x->d) * GGML_CPU_FP16_TO_FP32(y->d);
+}
+
 void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
 #if defined(__riscv_v)
     const int qk = QK8_0;
@@ -164,6 +190,64 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
         sumf += sumi*GGML_CPU_FP16_TO_FP32(x[ib].d)*GGML_CPU_FP16_TO_FP32(y[ib].d);
     }
 
+    *s = sumf;
+#elif defined(__RVV_ASM_XTHEAD)
+    const int nb = n / QK8_0;
+    const block_q4_0 * GGML_RESTRICT x = vx;
+    const block_q8_0 * GGML_RESTRICT y = vy;
+    float sumf = 0.0f;    
+    int ib = 0;
+    for (; ib + 1 < nb; ib += 2) {
+        int32_t sumi[2];
+        asm volatile(
+            "li t0, 16\n\t"
+            "th.vsetvli x0, t0, e8, m1\n\t"
+            
+            // --- Block 0 ---
+            "th.vle.v v8, (%[x0_ptr])\n\t"
+            "th.vle.v v10, (%[y00_ptr])\n\t"
+            "th.vle.v v11, (%[y01_ptr])\n\t"
+            "th.vand.vi v9, v8, 15\n\t"
+            "th.vsrl.vi v8, v8, 4\n\t"
+            "th.vadd.vi v9, v9, -8\n\t"
+            "th.vadd.vi v8, v8, -8\n\t"
+            "th.vwmul.vv v12, v9, v10\n\t"
+            "th.vwmacc.vv v12, v8, v11\n\t"
+            // --- Block 1 ---
+            "th.vle.v v16, (%[x1_ptr])\n\t"
+            "th.vle.v v18, (%[y10_ptr])\n\t"
+            "th.vle.v v19, (%[y11_ptr])\n\t"
+            "th.vand.vi v17, v16, 15\n\t"
+            "th.vsrl.vi v16, v16, 4\n\t"
+            "th.vadd.vi v17, v17, -8\n\t"
+            "th.vadd.vi v16, v16, -8\n\t"
+            "th.vwmul.vv v20, v17, v18\n\t"
+            "th.vwmacc.vv v20, v16, v19\n\t"
+
+            "th.vsetvli x0, t0, e16, m2\n\t"
+            "th.vmv.s.x v14, x0\n\t"
+            "th.vwredsum.vs v14, v12, v14\n\t"
+            "th.vmv.s.x v22, x0\n\t"
+            "th.vwredsum.vs v22, v20, v22\n\t"
+            "th.vsetvli x0, t0, e32, m1\n\t"
+            "th.vmv.x.s %[sumi0], v14\n\t"
+            "th.vmv.x.s %[sumi1], v22\n\t"
+
+            :  [sumi0] "=r"(sumi[0]),  [sumi1] "=r"(sumi[1])             
+            :  [x0_ptr] "r"(x[ib+0].qs), 
+              [y00_ptr] "r"(y[ib+0].qs), 
+              [y01_ptr] "r"(y[ib+0].qs + 16),              [x1_ptr] "r"(x[ib+1].qs), 
+              [y10_ptr] "r"(y[ib+1].qs), 
+              [y11_ptr] "r"(y[ib+1].qs + 16)            
+            : "memory", "t0", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v8", "v9"        
+        );
+        sumf += (float)sumi[0] * GGML_CPU_FP16_TO_FP32(x[ib+0].d) * GGML_CPU_FP16_TO_FP32(y[ib+0].d);
+        sumf += (float)sumi[1] * GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d);    
+    }
+    
+    for (; ib < nb; ++ib) { 
+        process_single_block_q4_q8_asm_ggml_vec_dot_q4_0_q8_0_asm_unroll2(&x[ib], &y[ib], &sumf); 
+    }
     *s = sumf;
 #else
     ggml_vec_dot_q4_0_q8_0_generic(n, s, bs, vx, bx, vy, by, nrc);
