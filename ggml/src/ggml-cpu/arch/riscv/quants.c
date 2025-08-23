@@ -30,8 +30,8 @@ void quantize_row_q8_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, i
 
     block_q8_0 * GGML_RESTRICT y = vy;
 
-// #if defined(__riscv_v)
-#if defined(__RVV_ASM_XTHEAD)
+#if defined(__riscv_v)
+// #if defined(__RVV_ASM_XTHEAD)
 
     size_t vl = QK8_0;
 
