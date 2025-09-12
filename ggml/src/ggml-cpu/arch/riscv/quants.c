@@ -143,7 +143,7 @@ static inline void process_single_block_q4_q8_asm_ggml_vec_dot_q4_0_q8_0_asm_unr
 }
 
 void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
-#if defined(__riscv_v) || defined(__riscv_xtheadvector)
+#if defined(__riscv_v) || defined(__riscv_xtheadvector) && !defined(__RVV_ASM_XTHEAD)
     const int qk = QK8_0;
     const int nb = n / qk;
 
@@ -475,7 +475,7 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     int ib = 0;
     float sumf = 0;
 
-#if defined(__riscv_v) || defined(__riscv_xtheadvector)
+#if defined(__riscv_v) || defined(__riscv_xtheadvector) && !defined(__RVV_ASM_XTHEAD)
     size_t vl = qk;
 
     for (; ib < nb; ++ib) {
