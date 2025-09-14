@@ -583,7 +583,7 @@ void ggml_vec_dot_q8_0_q8_0_decode(int n, float * GGML_RESTRICT s, size_t bs, co
     int ib = 0;
     float sumf = 0;
 
-#if defined(__riscv_v) || defined(__riscv_xtheadvector) 
+#if defined(__riscv_v) || defined(__riscv_xtheadvector) && !defined(__RVV_ASM_XTHEAD)
     size_t vl = qk;
 
     for (; ib < nb; ++ib) {
