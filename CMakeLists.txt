@@ -12,9 +12,9 @@ if (NOT XCODE AND NOT MSVC AND NOT CMAKE_BUILD_TYPE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-if (__RVV_ASM_XTHEAD)
+if (__RVV_ASM_STD)
     message(STATUS "Using inlined RVV assemble for XThead")
-    add_compile_definitions(__RVV_ASM_XTHEAD)
+    add_compile_definitions(__RVV_ASM_STD)
 endif()
 
 message("CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")

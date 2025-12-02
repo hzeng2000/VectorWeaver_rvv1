@@ -31,7 +31,6 @@ void quantize_row_q8_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, i
     block_q8_0 * GGML_RESTRICT y = vy;
 
 #if defined(__riscv_v)
-// #if defined(__RVV_ASM_XTHEAD)
 
     size_t vl = QK8_0;
 
@@ -116,34 +115,43 @@ void quantize_row_q8_1(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, i
 
 //===================================== Dot products =================================
 
-static inline void process_single_block_q4_q8_asm_ggml_vec_dot_q4_0_q8_0_asm_unroll2(const block_q4_0* x, const block_q8_0* y, float* sumf) {
+static inline void process_single_block_q4_q8_asm_ggml_vec_dot_q4_0_q8_0_asm_unroll2_interleaved(const block_q4_0* x, const block_q8_0* y, float* sumf) {
     int32_t sumi;
     asm volatile(
         "li t0, 16\n\t"
-        "th.vsetvli x0, t0, e8, m1\n\t"
-        "th.vle.v v8, (%[x_ptr])\n\t"
-        "th.vand.vi v9, v8, 15\n\t"
-        "th.vsrl.vi v8, v8, 4\n\t"
-        "th.vadd.vi v9, v9, -8\n\t"
-        "th.vadd.vi v8, v8, -8\n\t"
-        "th.vle.v v10, (%[y0_ptr])\n\t"
-        "th.vle.v v11, (%[y1_ptr])\n\t"
-        "th.vwmul.vv v12, v9, v10\n\t"
-        "th.vwmacc.vv v12, v8, v11\n\t"
-        "th.vsetvli x0, t0, e16, m2\n\t"
-        "th.vmv.s.x v16, x0\n\t"
-        "th.vwredsum.vs v16, v12, v16\n\t"
-        "th.vsetvli x0, t0, e32, m1\n\t"
-        "th.vmv.x.s %[sumi], v16\n\t"
+        "vsetvli x0, t0, e8, m1, ta, ma\n\t"
+        // Load packed q4 (16 bytes = 32 nibbles)
+        "vle8.v v8, (%[x_ptr])\n\t"
+        // Unpack low nibbles
+        "vand.vi v10, v8, 15\n\t"
+        "vsub.vx v10, v10, %[sub_val]\n\t"  // subtract 8
+        // Unpack high nibbles
+        "vsrl.vi v11, v8, 4\n\t"
+        "vsub.vx v11, v11, %[sub_val]\n\t"  // subtract 8
+        // Load q8 halves
+        "vle8.v v12, (%[y_lo_ptr])\n\t"
+        "vle8.v v13, (%[y_hi_ptr])\n\t"
+        // Widening multiply
+        "vwmul.vv v16, v10, v12\n\t"
+        "vwmacc.vv v16, v11, v13\n\t"
+        // Reduce
+        "vsetvli x0, t0, e16, m2, ta, ma\n\t"
+        "vmv.s.x v24, x0\n\t"
+        "vwredsum.vs v24, v16, v24\n\t"
+        "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+        "vmv.x.s %[sumi], v24\n\t"
         : [sumi] "=r"(sumi)
-        : [x_ptr] "r"(x->qs), [y0_ptr] "r"(y->qs), [y1_ptr] "r"(y->qs + 16)
-        : "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16"
+        : [x_ptr] "r"(x->qs), 
+          [y_lo_ptr] "r"(y->qs), 
+          [y_hi_ptr] "r"(y->qs + 16),
+          [sub_val] "r"(8)
+        : "t0", "memory", "v8", "v10", "v11", "v12", "v13", "v16", "v17", "v24"
     );
     *sumf += (float)sumi * GGML_CPU_FP16_TO_FP32(x->d) * GGML_CPU_FP16_TO_FP32(y->d);
 }
 
 void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
-#if (defined(__riscv_v) || defined(__riscv_xtheadvector)) && !defined(__RVV_ASM_XTHEAD)
+#if defined(__riscv_v) && !defined(__RVV_ASM_STD)
     const int qk = QK8_0;
     const int nb = n / qk;
 
@@ -192,7 +200,7 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     }
 
     *s = sumf;
-#elif defined(__RVV_ASM_XTHEAD)
+#elif defined(__RVV_ASM_STD)
     UNUSED(nrc);
     UNUSED(bx);
     UNUSED(by);
@@ -206,52 +214,55 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
         int32_t sumi[2];
         asm volatile(
             "li t0, 16\n\t"
-            "th.vsetvli x0, t0, e8, m1\n\t"
-            
-            // --- Block 0 ---
-            "th.vle.v v8, (%[x0_ptr])\n\t"
-            "th.vle.v v10, (%[y00_ptr])\n\t"
-            "th.vle.v v11, (%[y01_ptr])\n\t"
-            "th.vand.vi v9, v8, 15\n\t"
-            "th.vsrl.vi v8, v8, 4\n\t"
-            "th.vadd.vi v9, v9, -8\n\t"
-            "th.vadd.vi v8, v8, -8\n\t"
-            "th.vwmul.vv v12, v9, v10\n\t"
-            "th.vwmacc.vv v12, v8, v11\n\t"
-            // --- Block 1 ---
-            "th.vle.v v16, (%[x1_ptr])\n\t"
-            "th.vle.v v18, (%[y10_ptr])\n\t"
-            "th.vle.v v19, (%[y11_ptr])\n\t"
-            "th.vand.vi v17, v16, 15\n\t"
-            "th.vsrl.vi v16, v16, 4\n\t"
-            "th.vadd.vi v17, v17, -8\n\t"
-            "th.vadd.vi v16, v16, -8\n\t"
-            "th.vwmul.vv v20, v17, v18\n\t"
-            "th.vwmacc.vv v20, v16, v19\n\t"
-
-            "th.vsetvli x0, t0, e16, m2\n\t"
-            "th.vmv.s.x v14, x0\n\t"
-            "th.vwredsum.vs v14, v12, v14\n\t"
-            "th.vmv.s.x v22, x0\n\t"
-            "th.vwredsum.vs v22, v20, v22\n\t"
-            "th.vsetvli x0, t0, e32, m1\n\t"
-            "th.vmv.x.s %[sumi0], v14\n\t"
-            "th.vmv.x.s %[sumi1], v22\n\t"
-
-            :  [sumi0] "=r"(sumi[0]),  [sumi1] "=r"(sumi[1])             
-            :  [x0_ptr] "r"(x[ib+0].qs), 
-              [y00_ptr] "r"(y[ib+0].qs), 
-              [y01_ptr] "r"(y[ib+0].qs + 16),              [x1_ptr] "r"(x[ib+1].qs), 
-              [y10_ptr] "r"(y[ib+1].qs), 
-              [y11_ptr] "r"(y[ib+1].qs + 16)            
-            : "memory", "t0", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v8", "v9"        
-        );
+            // 1. Load all data
+            "vsetvli x0, t0, e8, m1, ta, ma\n\t"
+            "vle8.v v8, (%[x0_ptr])\n\t"
+            "vle8.v v10, (%[y0_lo_ptr])\n\t"
+            "vle8.v v11, (%[y0_hi_ptr])\n\t"
+            "vle8.v v16, (%[x1_ptr])\n\t"
+            "vle8.v v18, (%[y1_lo_ptr])\n\t"
+            "vle8.v v19, (%[y1_hi_ptr])\n\t"
+            // 2. Unpack all q4 data
+            "vand.vi v9, v8, 15\n\t"
+            "vsub.vx v9, v9, %[sub_val]\n\t"
+            "vsrl.vi v8, v8, 4\n\t"
+            "vsub.vx v8, v8, %[sub_val]\n\t"
+            "vand.vi v17, v16, 15\n\t"
+            "vsub.vx v17, v17, %[sub_val]\n\t"
+            "vsrl.vi v16, v16, 4\n\t"
+            "vsub.vx v16, v16, %[sub_val]\n\t"
+            // 3. Perform all multiplications
+            "vwmul.vv v12, v9, v10\n\t"
+            "vwmacc.vv v12, v8, v11\n\t"
+            "vwmul.vv v20, v17, v18\n\t"
+            "vwmacc.vv v20, v16, v19\n\t"
+            // 4. Perform all reductions
+            "vsetvli x0, t0, e16, m2, ta, ma\n\t"
+            "vmv.s.x v14, x0\n\t"
+            "vwredsum.vs v14, v12, v14\n\t"
+            "vmv.s.x v22, x0\n\t"
+            "vwredsum.vs v22, v20, v22\n\t"
+            // Store all results
+            "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+            "vmv.x.s %[sumi0], v14\n\t"
+            "vmv.x.s %[sumi1], v22\n\t"
+            :  [sumi0] "=r"(sumi[0]),  [sumi1] "=r"(sumi[1])             :  
+              [x0_ptr] "r"(x[ib+0].qs), 
+              [y0_lo_ptr] "r"(y[ib+0].qs),
+              [y0_hi_ptr] "r"(y[ib+0].qs + 16),  
+              [x1_ptr] "r"(x[ib+1].qs), 
+              [y1_lo_ptr] "r"(y[ib+1].qs),
+              [y1_hi_ptr] "r"(y[ib+1].qs + 16) ,
+              [sub_val] "r"(8)
+            :               "t0", "memory", "memory", "t0", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v8", "v9");
+        
         sumf += (float)sumi[0] * GGML_CPU_FP16_TO_FP32(x[ib+0].d) * GGML_CPU_FP16_TO_FP32(y[ib+0].d);
-        sumf += (float)sumi[1] * GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d);    
+        sumf += (float)sumi[1] * GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d);
     }
-    
-    for (; ib < nb; ++ib) { 
-        process_single_block_q4_q8_asm_ggml_vec_dot_q4_0_q8_0_asm_unroll2(&x[ib], &y[ib], &sumf); 
+
+    // Tail loop
+    for (; ib < nb; ++ib) {
+        process_single_block_q4_q8_asm_ggml_vec_dot_q4_0_q8_0_asm_unroll2_interleaved(&x[ib], &y[ib], &sumf);
     }
     *s = sumf;
 #else
@@ -421,15 +432,15 @@ static inline void process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll4(c
     int32_t sumi;
     asm volatile(
         "li t0, 32\n\t"
-        "th.vsetvli x0, t0, e8,m2\n\t"
-        "th.vle.v v8, (%[x_ptr])\n\t"
-        "th.vle.v v10, (%[y_ptr])\n\t"
-        "th.vwmul.vv v12, v8, v10\n\t"
-        "th.vsetvli x0, t0, e16,m4\n\t"
-        "th.vmv.s.x v24, x0\n\t"
-        "th.vwredsum.vs v24, v12, v24\n\t"
-        "th.vsetvli x0, t0, e32,m1\n\t"
-        "th.vmv.x.s %[sumi], v24\n\t"
+        "vsetvli x0, t0, e8, m2, ta, ma\n\t"
+        "vle8.v v8, (%[x_ptr])\n\t"
+        "vle8.v v10, (%[y_ptr])\n\t"
+        "vwmul.vv v12, v8, v10\n\t"
+        "vsetvli x0, t0, e16, m4, ta, ma\n\t"
+        "vmv.s.x v24, x0\n\t"
+        "vwredsum.vs v24, v12, v24\n\t"
+        "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+        "vmv.x.s %[sumi], v24\n\t"
         : [sumi] "=r"(sumi)
         : [x_ptr] "r"(x->qs), [y_ptr] "r"(y->qs)
         : "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v24"
@@ -441,15 +452,15 @@ static inline void process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll2(c
     int32_t sumi;
     asm volatile(
         "li t0, 32\n\t"
-        "th.vsetvli x0, t0, e8,m2\n\t"
-        "th.vle.v v8, (%[x_ptr])\n\t"
-        "th.vle.v v10, (%[y_ptr])\n\t"
-        "th.vwmul.vv v12, v8, v10\n\t"
-        "th.vsetvli x0, t0, e16,m4\n\t"
-        "th.vmv.s.x v24, x0\n\t"
-        "th.vwredsum.vs v24, v12, v24\n\t"
-        "th.vsetvli x0, t0, e32,m1\n\t"
-        "th.vmv.x.s %[sumi], v24\n\t"
+        "vsetvli x0, t0, e8, m2, ta, ma\n\t"
+        "vle8.v v8, (%[x_ptr])\n\t"
+        "vle8.v v10, (%[y_ptr])\n\t"
+        "vwmul.vv v12, v8, v10\n\t"
+        "vsetvli x0, t0, e16, m4, ta, ma\n\t"
+        "vmv.s.x v24, x0\n\t"
+        "vwredsum.vs v24, v12, v24\n\t"
+        "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+        "vmv.x.s %[sumi], v24\n\t"
         : [sumi] "=r"(sumi)
         : [x_ptr] "r"(x->qs), [y_ptr] "r"(y->qs)
         : "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v24"
@@ -475,7 +486,7 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     int ib = 0;
     float sumf = 0;
 
-#if (defined(__riscv_v) || defined(__riscv_xtheadvector)) && !defined(__RVV_ASM_XTHEAD)
+#if defined(__riscv_v) && !defined(__RVV_ASM_STD)
     size_t vl = qk;
 
     for (; ib < nb; ++ib) {
@@ -494,7 +505,7 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     }
 
     *s = sumf;
-#elif defined(__RVV_ASM_XTHEAD)
+#elif defined(__RVV_ASM_STD)
     for (; ib + 3 < nb; ib += 4) {
         int32_t sumi[4];
         asm volatile(
@@ -503,43 +514,43 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
 
 
             // Block 0
-            "th.vsetvli x0, t0, e8, m2\n\t"
-            "th.vle.v v8, (%[x0_ptr])\n\t"
-            "th.vle.v v10, (%[y0_ptr])\n\t"
-            "th.vwmul.vv v24, v8, v10\n\t"
-            "th.vsetvli x0, t0, e16, m4\n\t"
-            "th.vmv.s.x v28, x0\n\t"
-            "th.vwredsum.vs v28, v24, v28\n\t"
+            "vsetvli x0, t0, e8, m2, ta, ma\n\t"
+            "vle8.v v8, (%[x0_ptr])\n\t"
+            "vle8.v v10, (%[y0_ptr])\n\t"
+            "vwmul.vv v24, v8, v10\n\t"
+            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
+            "vmv.s.x v28, x0\n\t"
+            "vwredsum.vs v28, v24, v28\n\t"
             // Block 1
-            "th.vsetvli x0, t0, e8, m2\n\t"
-            "th.vle.v v12, (%[x1_ptr])\n\t"
-            "th.vle.v v14, (%[y1_ptr])\n\t"
-            "th.vwmul.vv v24, v12, v14\n\t"
-            "th.vsetvli x0, t0, e16, m4\n\t"
-            "th.vmv.s.x v29, x0\n\t"
-            "th.vwredsum.vs v29, v24, v29\n\t"
+            "vsetvli x0, t0, e8, m2, ta, ma\n\t"
+            "vle8.v v12, (%[x1_ptr])\n\t"
+            "vle8.v v14, (%[y1_ptr])\n\t"
+            "vwmul.vv v24, v12, v14\n\t"
+            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
+            "vmv.s.x v29, x0\n\t"
+            "vwredsum.vs v29, v24, v29\n\t"
             // Block 2
-            "th.vsetvli x0, t0, e8, m2\n\t"
-            "th.vle.v v16, (%[x2_ptr])\n\t"
-            "th.vle.v v18, (%[y2_ptr])\n\t"
-            "th.vwmul.vv v24, v16, v18\n\t"
-            "th.vsetvli x0, t0, e16, m4\n\t"
-            "th.vmv.s.x v30, x0\n\t"
-            "th.vwredsum.vs v30, v24, v30\n\t"
+            "vsetvli x0, t0, e8, m2, ta, ma\n\t"
+            "vle8.v v16, (%[x2_ptr])\n\t"
+            "vle8.v v18, (%[y2_ptr])\n\t"
+            "vwmul.vv v24, v16, v18\n\t"
+            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
+            "vmv.s.x v30, x0\n\t"
+            "vwredsum.vs v30, v24, v30\n\t"
             // Block 3
-            "th.vsetvli x0, t0, e8, m2\n\t"
-            "th.vle.v v20, (%[x3_ptr])\n\t"
-            "th.vle.v v22, (%[y3_ptr])\n\t"
-            "th.vwmul.vv v24, v20, v22\n\t"
-            "th.vsetvli x0, t0, e16, m4\n\t"
-            "th.vmv.s.x v31, x0\n\t"
-            "th.vwredsum.vs v31, v24, v31\n\t"
+            "vsetvli x0, t0, e8, m2, ta, ma\n\t"
+            "vle8.v v20, (%[x3_ptr])\n\t"
+            "vle8.v v22, (%[y3_ptr])\n\t"
+            "vwmul.vv v24, v20, v22\n\t"
+            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
+            "vmv.s.x v31, x0\n\t"
+            "vwredsum.vs v31, v24, v31\n\t"
 
-            "th.vsetvli x0, t0, e32, m1\n\t"
-            "th.vmv.x.s %[sumi0], v28\n\t"
-            "th.vmv.x.s %[sumi1], v29\n\t"
-            "th.vmv.x.s %[sumi2], v30\n\t"
-            "th.vmv.x.s %[sumi3], v31\n\t"
+            "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+            "vmv.x.s %[sumi0], v28\n\t"
+            "vmv.x.s %[sumi1], v29\n\t"
+            "vmv.x.s %[sumi2], v30\n\t"
+            "vmv.x.s %[sumi3], v31\n\t"
             /******************** CODE BLOCK END ********************/
             :  [sumi0] "=r"(sumi[0]),  [sumi1] "=r"(sumi[1]),  [sumi2] "=r"(sumi[2]),  [sumi3] "=r"(sumi[3])             :  [x0_ptr] "r"(x[ib+0].qs), [y0_ptr] "r"(y[ib+0].qs),  [x1_ptr] "r"(x[ib+1].qs), [y1_ptr] "r"(y[ib+1].qs),  [x2_ptr] "r"(x[ib+2].qs), [y2_ptr] "r"(y[ib+2].qs),  [x3_ptr] "r"(x[ib+3].qs), [y3_ptr] "r"(y[ib+3].qs)             :               "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
         
@@ -583,7 +594,7 @@ void ggml_vec_dot_q8_0_q8_0_decode(int n, float * GGML_RESTRICT s, size_t bs, co
     int ib = 0;
     float sumf = 0;
 
-#if (defined(__riscv_v) || defined(__riscv_xtheadvector)) && !defined(__RVV_ASM_XTHEAD)
+#if defined(__riscv_v) && !defined(__RVV_ASM_STD)
     size_t vl = qk;
 
     for (; ib < nb; ++ib) {
@@ -602,7 +613,7 @@ void ggml_vec_dot_q8_0_q8_0_decode(int n, float * GGML_RESTRICT s, size_t bs, co
     }
 
     *s = sumf;
-#elif defined(__RVV_ASM_XTHEAD)
+#elif defined(__RVV_ASM_STD)
     for (; ib + 1 < nb; ib += 2) {
         int32_t sumi[2];
         asm volatile(
@@ -611,30 +622,27 @@ void ggml_vec_dot_q8_0_q8_0_decode(int n, float * GGML_RESTRICT s, size_t bs, co
 
 
             // Block 0
-            "th.vsetvli x0, t0, e8, m2\n\t"
-            "th.vle.v v8, (%[x0_ptr])\n\t"
-            "th.vle.v v10, (%[y0_ptr])\n\t"
-            "th.vwmul.vv v16, v8, v10\n\t"
-            "th.vsetvli x0, t0, e16, m4\n\t"
-            "th.vmv.s.x v20, x0\n\t"
-            "th.vwredsum.vs v20, v16, v20\n\t"
+            "vsetvli x0, t0, e8, m2, ta, ma\n\t"
+            "vle8.v v8, (%[x0_ptr])\n\t"
+            "vle8.v v10, (%[y0_ptr])\n\t"
+            "vwmul.vv v16, v8, v10\n\t"
+            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
+            "vmv.s.x v20, x0\n\t"
+            "vwredsum.vs v20, v16, v20\n\t"
             // Block 1
-            "th.vsetvli x0, t0, e8, m2\n\t"
-            "th.vle.v v12, (%[x1_ptr])\n\t"
-            "th.vle.v v14, (%[y1_ptr])\n\t"
-            "th.vwmul.vv v16, v12, v14\n\t"
-            "th.vsetvli x0, t0, e16, m4\n\t"
-            "th.vmv.s.x v21, x0\n\t"
-            "th.vwredsum.vs v21, v16, v21\n\t"
+            "vsetvli x0, t0, e8, m2, ta, ma\n\t"
+            "vle8.v v12, (%[x1_ptr])\n\t"
+            "vle8.v v14, (%[y1_ptr])\n\t"
+            "vwmul.vv v16, v12, v14\n\t"
+            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
+            "vmv.s.x v21, x0\n\t"
+            "vwredsum.vs v21, v16, v21\n\t"
 
-            "th.vsetvli x0, t0, e32, m1\n\t"
-            "th.vmv.x.s %[sumi0], v20\n\t"
-            "th.vmv.x.s %[sumi1], v21\n\t"
+            "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+            "vmv.x.s %[sumi0], v20\n\t"
+            "vmv.x.s %[sumi1], v21\n\t"
             /******************** CODE BLOCK END ********************/
-            :  [sumi0] "=r"(sumi[0]),  [sumi1] "=r"(sumi[1])             
-            :  [x0_ptr] "r"(x[ib+0].qs), [y0_ptr] "r"(y[ib+0].qs),  [x1_ptr] "r"(x[ib+1].qs), [y1_ptr] "r"(y[ib+1].qs)             
-            :  "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21"
-        );
+            :  [sumi0] "=r"(sumi[0]),  [sumi1] "=r"(sumi[1])             :  [x0_ptr] "r"(x[ib+0].qs), [y0_ptr] "r"(y[ib+0].qs),  [x1_ptr] "r"(x[ib+1].qs), [y1_ptr] "r"(y[ib+1].qs)             :               "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21");
         
         sumf += (float)sumi[0] * GGML_CPU_FP16_TO_FP32(x[ib+0].d) * GGML_CPU_FP16_TO_FP32(y[ib+0].d);
         sumf += (float)sumi[1] * GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d);
