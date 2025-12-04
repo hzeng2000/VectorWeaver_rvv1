@@ -1,0 +1,16 @@
+``` bash
+# build_asm.sh
+rm -rf *
+cmake -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=riscv64 -DCMAKE_C_COMPILER=riscv64-unknown-linux-gnu-gcc -DCMAKE_CXX_COMPILER=riscv64-unknown-linux-gnu-g++ -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DGGML_RVV=ON -DGGML_RV_ZFH=ON -DRVV_ASM_STD=True ..
+make -j96
+
+# build_intrinsic.sh
+rm -rf *
+cmake -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=riscv64 -DCMAKE_C_COMPILER=riscv64-unknown-linux-gnu-gcc -DCMAKE_CXX_COMPILER=riscv64-unknown-linux-gnu-g++ -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DGGML_RVV=ON -DGGML_RV_ZFH=ON -DRVV_ASM_STD=False ..
+make -j96
+
+# build_scalar.sh
+rm -rf *
+cmake -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=riscv64 -DCMAKE_C_COMPILER=riscv64-unknown-linux-gnu-gcc -DCMAKE_CXX_COMPILER=riscv64-unknown-linux-gnu-g++ -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_C_FLAGS="-march=rv64gc" -DCMAKE_CXX_FLAGS="-march=rv64gc" -DLLAMA_CURL=OFF -DGGML_RVV=False -DRVV_ASM_STD=False ..
+make -j96
+```
