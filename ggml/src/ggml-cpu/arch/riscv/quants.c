@@ -468,6 +468,31 @@ static inline void process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll2(c
     *sumf += (float)sumi * GGML_CPU_FP16_TO_FP32(x->d) * GGML_CPU_FP16_TO_FP32(y->d);
 }
 
+// Helper function for tail loop - RVV 1.0 版本
+static inline void process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll2_fused(const block_q8_0* x, const block_q8_0* y, float* sumf) {
+    int32_t sumi;
+    asm volatile(
+        "li t0, 32\n\t"
+        "vsetvli x0, t0, e8, m2, ta, ma\n\t"
+        "vle8.v v8, (%[x_ptr])\n\t"
+        "vle8.v v10, (%[y_ptr])\n\t"
+        "vwmul.vv v12, v8, v10\n\t"
+        // Initialize accumulator with correct SEW (e32)
+        "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+        "vmv.s.x v24, x0\n\t"
+        // Perform widening reduction (e16 -> e32)
+        "vsetvli x0, t0, e16, m4, ta, ma\n\t"
+        "vwredsum.vs v24, v12, v24\n\t"
+        // Extract scalar result
+        "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+        "vmv.x.s %[sumi], v24\n\t"
+        : [sumi] "=r"(sumi)
+        : [x_ptr] "r"(x->qs), [y_ptr] "r"(y->qs)
+        : "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v24"
+    );
+    *sumf += (float)sumi * GGML_CPU_FP16_TO_FP32(x->d) * GGML_CPU_FP16_TO_FP32(y->d);
+}
+
 
 void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
     const int qk = QK8_0;
@@ -506,63 +531,42 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
 
     *s = sumf;
 #elif defined(__RVV_ASM_STD)
-    for (; ib + 3 < nb; ib += 4) {
-        int32_t sumi[4];
+    for (; ib + 1 < nb; ib += 2) {
+        int32_t sumi[2];
         asm volatile(
             "li t0, 32\n\t"
             /******************* CODE BLOCK START *******************/
-
-
-            // Block 0
             "vsetvli x0, t0, e8, m2, ta, ma\n\t"
             "vle8.v v8, (%[x0_ptr])\n\t"
-            "vle8.v v10, (%[y0_ptr])\n\t"
-            "vwmul.vv v24, v8, v10\n\t"
-            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
-            "vmv.s.x v28, x0\n\t"
-            "vwredsum.vs v28, v24, v28\n\t"
-            // Block 1
-            "vsetvli x0, t0, e8, m2, ta, ma\n\t"
-            "vle8.v v12, (%[x1_ptr])\n\t"
+            "vle8.v v10, (%[x1_ptr])\n\t"
+            "vle8.v v12, (%[y0_ptr])\n\t"
             "vle8.v v14, (%[y1_ptr])\n\t"
-            "vwmul.vv v24, v12, v14\n\t"
-            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
-            "vmv.s.x v29, x0\n\t"
-            "vwredsum.vs v29, v24, v29\n\t"
-            // Block 2
-            "vsetvli x0, t0, e8, m2, ta, ma\n\t"
-            "vle8.v v16, (%[x2_ptr])\n\t"
-            "vle8.v v18, (%[y2_ptr])\n\t"
-            "vwmul.vv v24, v16, v18\n\t"
-            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
-            "vmv.s.x v30, x0\n\t"
-            "vwredsum.vs v30, v24, v30\n\t"
-            // Block 3
-            "vsetvli x0, t0, e8, m2, ta, ma\n\t"
-            "vle8.v v20, (%[x3_ptr])\n\t"
-            "vle8.v v22, (%[y3_ptr])\n\t"
-            "vwmul.vv v24, v20, v22\n\t"
-            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
-            "vmv.s.x v31, x0\n\t"
-            "vwredsum.vs v31, v24, v31\n\t"
-
+            // Perform widening multiplications: int8 -> int16
+            "vwmul.vv v16, v8, v12\n\t"
+            "vwmul.vv v20, v10, v14\n\t"
+            // Initialize accumulators with correct SEW (e32)
             "vsetvli x0, t0, e32, m1, ta, ma\n\t"
-            "vmv.x.s %[sumi0], v28\n\t"
-            "vmv.x.s %[sumi1], v29\n\t"
-            "vmv.x.s %[sumi2], v30\n\t"
-            "vmv.x.s %[sumi3], v31\n\t"
+            "vmv.s.x v24, x0\n\t"
+            "vmv.s.x v28, x0\n\t"
+            // Perform widening reductions: int16 -> int32
+            "vsetvli x0, t0, e16, m4, ta, ma\n\t"
+            "vwredsum.vs v24, v16, v24\n\t"
+            "vwredsum.vs v28, v20, v28\n\t"
+            // Extract scalar results
+            "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+            "vmv.x.s %[sumi0], v24\n\t"
+            "vmv.x.s %[sumi1], v28\n\t"
+
             /******************** CODE BLOCK END ********************/
-            :  [sumi0] "=r"(sumi[0]),  [sumi1] "=r"(sumi[1]),  [sumi2] "=r"(sumi[2]),  [sumi3] "=r"(sumi[3])             :  [x0_ptr] "r"(x[ib+0].qs), [y0_ptr] "r"(y[ib+0].qs),  [x1_ptr] "r"(x[ib+1].qs), [y1_ptr] "r"(y[ib+1].qs),  [x2_ptr] "r"(x[ib+2].qs), [y2_ptr] "r"(y[ib+2].qs),  [x3_ptr] "r"(x[ib+3].qs), [y3_ptr] "r"(y[ib+3].qs)             :               "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
+            :  [sumi0] "=r"(sumi[0]),  [sumi1] "=r"(sumi[1])             :  [x0_ptr] "r"(x[ib+0].qs), [y0_ptr] "r"(y[ib+0].qs),  [x1_ptr] "r"(x[ib+1].qs), [y1_ptr] "r"(y[ib+1].qs)             :               "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29");
         
         sumf += (float)sumi[0] * GGML_CPU_FP16_TO_FP32(x[ib+0].d) * GGML_CPU_FP16_TO_FP32(y[ib+0].d);
         sumf += (float)sumi[1] * GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d);
-        sumf += (float)sumi[2] * GGML_CPU_FP16_TO_FP32(x[ib+2].d) * GGML_CPU_FP16_TO_FP32(y[ib+2].d);
-        sumf += (float)sumi[3] * GGML_CPU_FP16_TO_FP32(x[ib+3].d) * GGML_CPU_FP16_TO_FP32(y[ib+3].d);
     }
 
     // Tail loop
     for (; ib < nb; ++ib) {
-        process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll4(&x[ib], &y[ib], &sumf);
+        process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll2_fused(&x[ib], &y[ib], &sumf);
     }
     *s = sumf;
 #else
