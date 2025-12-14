@@ -470,7 +470,7 @@ static inline void process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll2(c
 }
 
 // Helper function for tail loop - RVV 1.0 版本
-static inline void process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll2_fused(const block_q8_0* x, const block_q8_0* y, float* sumf) {
+static inline void process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll2_fused_f64(const block_q8_0* x, const block_q8_0* y, float* sumf) {
     int32_t sumi;
     asm volatile(
         "li t0, 32\n\t"
@@ -561,15 +561,17 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
             /******************** CODE BLOCK END ********************/
             :  [sumi0] "=r"(sumi[0]),  [sumi1] "=r"(sumi[1])             :  [x0_ptr] "r"(x[ib+0].qs), [y0_ptr] "r"(y[ib+0].qs),  [x1_ptr] "r"(x[ib+1].qs), [y1_ptr] "r"(y[ib+1].qs)             :               "t0", "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29");
         
-        sumf += (float)sumi[0] * GGML_CPU_FP16_TO_FP32(x[ib+0].d) * GGML_CPU_FP16_TO_FP32(y[ib+0].d);
-        sumf += (float)sumi[1] * GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d);
+        sum_d += (double)sumi[0] * GGML_CPU_FP16_TO_FP32(x[ib+0].d) * GGML_CPU_FP16_TO_FP32(y[ib+0].d);
+        sum_d += (double)sumi[1] * GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d);
     }
 
     // Tail loop
+    float temp_sumf = 0.0f;
     for (; ib < nb; ++ib) {
-        process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll2_fused(&x[ib], &y[ib], &sumf);
+        process_single_block_asm_ggml_vec_dot_q8_0_q8_0_asm_unroll2_fused_f64(&x[ib], &y[ib], &temp_sumf);
     }
-    *s = sumf;
+    sum_d += temp_sumf;
+    *s = (float)sum_d;
 #else
 
     UNUSED(nb);
