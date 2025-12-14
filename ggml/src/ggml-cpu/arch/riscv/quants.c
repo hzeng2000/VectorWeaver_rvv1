@@ -23,6 +23,7 @@
 
 #define UNUSED GGML_UNUSED
 
+#define __riscv_vcreate_v_i8m1_i8m2(v0, v1) __riscv_vset_v_i8m1_i8m2(__riscv_vset_v_i8m1_i8m2(__riscv_vundefined_i8m2(), 0, v0), 1, v1)
 void quantize_row_q8_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k) {
     assert(QK8_0 == 32);
     assert(k % QK8_0 == 0);
@@ -322,7 +323,7 @@ void ggml_vec_dot_q4_1_q8_1(int n, float * GGML_RESTRICT s, size_t bs, const voi
 }
 
 void ggml_vec_dot_q5_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
-#if defined(__riscv_v_)
+#if defined(__riscv_v)
     const int qk = QK8_0;
     const int nb = n / qk;
 
