@@ -525,7 +525,7 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
         vint32m1_t v_zero = __riscv_vmv_v_x_i32m1(0, vl);
         vint32m1_t v_sum = __riscv_vwredsum_vs_i16m4_i32m1(vw_mul, v_zero, vl);
 
-        int sumi = __riscv_vmv_x_s_i32m1_i32(v_sum);
+        int32_t sumi = __riscv_vmv_x_s_i32m1_i32(v_sum);
 
         sumf += sumi*(GGML_CPU_FP16_TO_FP32(x[ib].d)*GGML_CPU_FP16_TO_FP32(y[ib].d));
     }
