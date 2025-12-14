@@ -511,6 +511,7 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
 
     int ib = 0;
     float sumf = 0;
+    double sum_d = 0.0;
 
 #if defined(__riscv_v) && !defined(__RVV_ASM_STD)
     size_t vl = qk;
