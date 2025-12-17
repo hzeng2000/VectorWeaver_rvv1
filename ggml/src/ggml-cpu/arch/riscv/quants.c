@@ -616,10 +616,10 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
         );
         
         // Apply scales
-        sumf += (float)sumi[0] * GGML_CPU_FP16_TO_FP32(x[ib+0].d) * GGML_CPU_FP16_TO_FP32(y[ib+0].d);
-        sumf += (float)sumi[1] * GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d);
-        sumf += (float)sumi[2] * GGML_CPU_FP16_TO_FP32(x[ib+2].d) * GGML_CPU_FP16_TO_FP32(y[ib+2].d);
-        sumf += (float)sumi[3] * GGML_CPU_FP16_TO_FP32(x[ib+3].d) * GGML_CPU_FP16_TO_FP32(y[ib+3].d);
+        sumf += GGML_CPU_FP16_TO_FP32(x[ib+0].d) * GGML_CPU_FP16_TO_FP32(y[ib+0].d) * (float)sumi[0];
+        sumf += GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d) * (float)sumi[1];
+        sumf += GGML_CPU_FP16_TO_FP32(x[ib+2].d) * GGML_CPU_FP16_TO_FP32(y[ib+2].d) * (float)sumi[2];
+        sumf += GGML_CPU_FP16_TO_FP32(x[ib+3].d) * GGML_CPU_FP16_TO_FP32(y[ib+3].d) * (float)sumi[3];
     }
     
     // Tail loop for remaining blocks
@@ -645,7 +645,7 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
               [x_hi] "r"(x[ib].qs + 16), [y_hi] "r"(y[ib].qs + 16)
             : "t0", "memory", "v0", "v1", "v2", "v3", "v8", "v9", "v16"
         );
-        sumf += (float)sumi * GGML_CPU_FP16_TO_FP32(x[ib].d) * GGML_CPU_FP16_TO_FP32(y[ib].d);
+        sumf += GGML_CPU_FP16_TO_FP32(x[ib].d) * GGML_CPU_FP16_TO_FP32(y[ib].d) * (float)sumi;
     }
     
     *s = sumf;
