@@ -218,133 +218,47 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     const block_q8_0 * GGML_RESTRICT y = vy;
     float sumf = 0.0f;    
     int ib = 0;
-    const int BATCH_SIZE = 4;
-    
-    for (; ib + BATCH_SIZE <= nb; ib += BATCH_SIZE) {
-        int32_t sumi[BATCH_SIZE];
-        
-        asm volatile(
-            "li t0, 16\n\t"
-            
-            // Initialize accumulators to zero
-            "vsetvli x0, t0, e32, m1, ta, ma\n\t"
-            "vmv.s.x v24, x0\n\t"
-            "vmv.s.x v25, x0\n\t"
-            "vmv.s.x v26, x0\n\t"
-            "vmv.s.x v27, x0\n\t"
-            
-            // ===== Block 0 =====
-            "vsetvli x0, t0, e8, m1, ta, ma\n\t"
-            // Load and unpack q4
-            "vle8.v v0, (%[x0_ptr])\n\t"
-            "vand.vi v1, v0, 15\n\t"
-            "vsub.vx v1, v1, %[sub_val]\n\t"
-            "vsrl.vi v2, v0, 4\n\t"
-            "vsub.vx v2, v2, %[sub_val]\n\t"
-            // Load q8 halves
-            "vle8.v v3, (%[y0_lo])\n\t"
-            "vle8.v v4, (%[y0_hi])\n\t"
-            // Widening multiply and accumulate
-            "vwmul.vv v8, v1, v3\n\t"
-            "vwmacc.vv v8, v2, v4\n\t"
-            // Reduce
-            "vsetvli x0, t0, e16, m2, ta, ma\n\t"
-            "vwredsum.vs v24, v8, v24\n\t"
-            // ===== Block 1 =====
-            "vsetvli x0, t0, e8, m1, ta, ma\n\t"
-            // Load and unpack q4
-            "vle8.v v0, (%[x1_ptr])\n\t"
-            "vand.vi v1, v0, 15\n\t"
-            "vsub.vx v1, v1, %[sub_val]\n\t"
-            "vsrl.vi v2, v0, 4\n\t"
-            "vsub.vx v2, v2, %[sub_val]\n\t"
-            // Load q8 halves
-            "vle8.v v3, (%[y1_lo])\n\t"
-            "vle8.v v4, (%[y1_hi])\n\t"
-            // Widening multiply and accumulate
-            "vwmul.vv v8, v1, v3\n\t"
-            "vwmacc.vv v8, v2, v4\n\t"
-            // Reduce
-            "vsetvli x0, t0, e16, m2, ta, ma\n\t"
-            "vwredsum.vs v25, v8, v25\n\t"
-            // ===== Block 2 =====
-            "vsetvli x0, t0, e8, m1, ta, ma\n\t"
-            // Load and unpack q4
-            "vle8.v v0, (%[x2_ptr])\n\t"
-            "vand.vi v1, v0, 15\n\t"
-            "vsub.vx v1, v1, %[sub_val]\n\t"
-            "vsrl.vi v2, v0, 4\n\t"
-            "vsub.vx v2, v2, %[sub_val]\n\t"
-            // Load q8 halves
-            "vle8.v v3, (%[y2_lo])\n\t"
-            "vle8.v v4, (%[y2_hi])\n\t"
-            // Widening multiply and accumulate
-            "vwmul.vv v8, v1, v3\n\t"
-            "vwmacc.vv v8, v2, v4\n\t"
-            // Reduce
-            "vsetvli x0, t0, e16, m2, ta, ma\n\t"
-            "vwredsum.vs v26, v8, v26\n\t"
-            // ===== Block 3 =====
-            "vsetvli x0, t0, e8, m1, ta, ma\n\t"
-            // Load and unpack q4
-            "vle8.v v0, (%[x3_ptr])\n\t"
-            "vand.vi v1, v0, 15\n\t"
-            "vsub.vx v1, v1, %[sub_val]\n\t"
-            "vsrl.vi v2, v0, 4\n\t"
-            "vsub.vx v2, v2, %[sub_val]\n\t"
-            // Load q8 halves
-            "vle8.v v3, (%[y3_lo])\n\t"
-            "vle8.v v4, (%[y3_hi])\n\t"
-            // Widening multiply and accumulate
-            "vwmul.vv v8, v1, v3\n\t"
-            "vwmacc.vv v8, v2, v4\n\t"
-            // Reduce
-            "vsetvli x0, t0, e16, m2, ta, ma\n\t"
-            "vwredsum.vs v27, v8, v27\n\t"
-            
-            // Extract all results
-            "vsetvli x0, t0, e32, m1, ta, ma\n\t"
-            "vmv.x.s %[s0], v24\n\t"
-            "vmv.x.s %[s1], v25\n\t"
-            "vmv.x.s %[s2], v26\n\t"
-            "vmv.x.s %[s3], v27\n\t"
-            
-            : [s0] "=r"(sumi[0]), [s1] "=r"(sumi[1]), [s2] "=r"(sumi[2]), [s3] "=r"(sumi[3])            : [x0_ptr] "r"(x[ib+0].qs), [y0_lo] "r"(y[ib+0].qs), [y0_hi] "r"(y[ib+0].qs + 16), [x1_ptr] "r"(x[ib+1].qs), [y1_lo] "r"(y[ib+1].qs), [y1_hi] "r"(y[ib+1].qs + 16), [x2_ptr] "r"(x[ib+2].qs), [y2_lo] "r"(y[ib+2].qs), [y2_hi] "r"(y[ib+2].qs + 16), [x3_ptr] "r"(x[ib+3].qs), [y3_lo] "r"(y[ib+3].qs), [y3_hi] "r"(y[ib+3].qs + 16),
-              [sub_val] "r"(8)
-            : "t0", "memory", "v0", "v1", "v2", "v24", "v25", "v26", "v27", "v3", "v4", "v8", "v9"        );
-        
-        sumf += (float)sumi[0] * (GGML_CPU_FP16_TO_FP32(x[ib+0].d) * GGML_CPU_FP16_TO_FP32(y[ib+0].d));
-        sumf += (float)sumi[1] * (GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d));
-        sumf += (float)sumi[2] * (GGML_CPU_FP16_TO_FP32(x[ib+2].d) * GGML_CPU_FP16_TO_FP32(y[ib+2].d));
-        sumf += (float)sumi[3] * (GGML_CPU_FP16_TO_FP32(x[ib+3].d) * GGML_CPU_FP16_TO_FP32(y[ib+3].d));
-    }
-    
-    // Tail loop
-    for (; ib < nb; ++ib) {
+    for (ib = 0; ib < nb; ++ib) {
         int32_t sumi;
+        
         asm volatile(
             "li t0, 16\n\t"
             "vsetvli x0, t0, e8, m1, ta, ma\n\t"
+            
+            // Load and unpack q4
             "vle8.v v0, (%[x_ptr])\n\t"
             "vand.vi v1, v0, 15\n\t"
             "vsub.vx v1, v1, %[sub_val]\n\t"
             "vsrl.vi v2, v0, 4\n\t"
             "vsub.vx v2, v2, %[sub_val]\n\t"
+            
+            // Load q8 halves
             "vle8.v v3, (%[y_lo])\n\t"
             "vle8.v v4, (%[y_hi])\n\t"
+            
+            // Widening multiply (separate)
             "vwmul.vv v8, v1, v3\n\t"
-            "vwmacc.vv v8, v2, v4\n\t"
+            "vwmul.vv v10, v2, v4\n\t"
+            
+            // Add both halves
+            "vsetvli x0, t0, e16, m2, ta, ma\n\t"
+            "vadd.vv v8, v8, v10\n\t"
+            
+            // Reduce
             "vsetvli x0, t0, e32, m1, ta, ma\n\t"
             "vmv.s.x v16, x0\n\t"
             "vsetvli x0, t0, e16, m2, ta, ma\n\t"
             "vwredsum.vs v16, v8, v16\n\t"
+            
             "vsetvli x0, t0, e32, m1, ta, ma\n\t"
             "vmv.x.s %[sumi], v16\n\t"
+            
             : [sumi] "=r"(sumi)
             : [x_ptr] "r"(x[ib].qs), [y_lo] "r"(y[ib].qs), [y_hi] "r"(y[ib].qs + 16),
               [sub_val] "r"(8)
-            : "t0", "memory", "v0", "v1", "v2", "v3", "v4", "v8", "v9", "v16"
+            : "t0", "memory", "v0", "v1", "v2", "v3", "v4", "v8", "v9", "v10", "v11", "v16"
         );
+        
         sumf += (float)sumi * (GGML_CPU_FP16_TO_FP32(x[ib].d) * GGML_CPU_FP16_TO_FP32(y[ib].d));
     }
     
