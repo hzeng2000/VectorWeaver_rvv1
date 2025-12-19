@@ -218,68 +218,136 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     const block_q8_0 * GGML_RESTRICT y = vy;
     float sumf = 0.0f;    
     int ib = 0;
-    for (; ib + 1 < nb; ib += 2) {
-        int32_t sumi[2];
+    const int BATCH_SIZE = 4;
+    
+    for (; ib + BATCH_SIZE <= nb; ib += BATCH_SIZE) {
+        int32_t sumi[BATCH_SIZE];
+        
         asm volatile(
             "li t0, 16\n\t"
-            // 1. Load all data
+            
+            // Initialize accumulators to zero
+            "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+            "vmv.s.x v24, x0\n\t"
+            "vmv.s.x v25, x0\n\t"
+            "vmv.s.x v26, x0\n\t"
+            "vmv.s.x v27, x0\n\t"
+            
+            // ===== Block 0 =====
             "vsetvli x0, t0, e8, m1, ta, ma\n\t"
-            "vle8.v v8, (%[x0_ptr])\n\t"
-            "vle8.v v10, (%[y0_lo_ptr])\n\t"
-            "vle8.v v11, (%[y0_hi_ptr])\n\t"
-            "vle8.v v16, (%[x1_ptr])\n\t"
-            "vle8.v v18, (%[y1_lo_ptr])\n\t"
-            "vle8.v v19, (%[y1_hi_ptr])\n\t"
-            // 2. Unpack all q4 data
-            "vand.vi v9, v8, 15\n\t"
-            "vsub.vx v9, v9, %[sub_val]\n\t"
-            "vsrl.vi v8, v8, 4\n\t"
-            "vsub.vx v8, v8, %[sub_val]\n\t"
-            "vand.vi v17, v16, 15\n\t"
-            "vsub.vx v17, v17, %[sub_val]\n\t"
-            "vsrl.vi v16, v16, 4\n\t"
-            "vsub.vx v16, v16, %[sub_val]\n\t"
-            // 3. Perform all multiplications (low parts)
-            "vwmul.vv v12, v9, v10\n\t"
-            "vwmul.vv v20, v17, v18\n\t"
-            // 4. Multiply high parts (reuse reduce_acc as temp storage)
-            "vwmul.vv v14, v8, v11\n\t"
-            "vwmul.vv v22, v16, v19\n\t"
-            // 5. Add low and high parts together
+            // Load and unpack q4
+            "vle8.v v0, (%[x0_ptr])\n\t"
+            "vand.vi v1, v0, 15\n\t"
+            "vsub.vx v1, v1, %[sub_val]\n\t"
+            "vsrl.vi v2, v0, 4\n\t"
+            "vsub.vx v2, v2, %[sub_val]\n\t"
+            // Load q8 halves
+            "vle8.v v3, (%[y0_lo])\n\t"
+            "vle8.v v4, (%[y0_hi])\n\t"
+            // Widening multiply and accumulate
+            "vwmul.vv v8, v1, v3\n\t"
+            "vwmacc.vv v8, v2, v4\n\t"
+            // Reduce
             "vsetvli x0, t0, e16, m2, ta, ma\n\t"
-            "vadd.vv v12, v12, v14\n\t"
-            "vadd.vv v20, v20, v22\n\t"
-            // 6. Perform all reductions
-            // Initialize accumulators (e32)
-            "vsetvli x0, t0, e32, m1, ta, ma\n\t"
-            "vmv.s.x v14, x0\n\t"
-            "vmv.s.x v22, x0\n\t"
-            // Widening reductions (e16 -> e32)
+            "vwredsum.vs v24, v8, v24\n\t"
+            // ===== Block 1 =====
+            "vsetvli x0, t0, e8, m1, ta, ma\n\t"
+            // Load and unpack q4
+            "vle8.v v0, (%[x1_ptr])\n\t"
+            "vand.vi v1, v0, 15\n\t"
+            "vsub.vx v1, v1, %[sub_val]\n\t"
+            "vsrl.vi v2, v0, 4\n\t"
+            "vsub.vx v2, v2, %[sub_val]\n\t"
+            // Load q8 halves
+            "vle8.v v3, (%[y1_lo])\n\t"
+            "vle8.v v4, (%[y1_hi])\n\t"
+            // Widening multiply and accumulate
+            "vwmul.vv v8, v1, v3\n\t"
+            "vwmacc.vv v8, v2, v4\n\t"
+            // Reduce
             "vsetvli x0, t0, e16, m2, ta, ma\n\t"
-            "vwredsum.vs v14, v12, v14\n\t"
-            "vwredsum.vs v22, v20, v22\n\t"
-            // Store all results
+            "vwredsum.vs v25, v8, v25\n\t"
+            // ===== Block 2 =====
+            "vsetvli x0, t0, e8, m1, ta, ma\n\t"
+            // Load and unpack q4
+            "vle8.v v0, (%[x2_ptr])\n\t"
+            "vand.vi v1, v0, 15\n\t"
+            "vsub.vx v1, v1, %[sub_val]\n\t"
+            "vsrl.vi v2, v0, 4\n\t"
+            "vsub.vx v2, v2, %[sub_val]\n\t"
+            // Load q8 halves
+            "vle8.v v3, (%[y2_lo])\n\t"
+            "vle8.v v4, (%[y2_hi])\n\t"
+            // Widening multiply and accumulate
+            "vwmul.vv v8, v1, v3\n\t"
+            "vwmacc.vv v8, v2, v4\n\t"
+            // Reduce
+            "vsetvli x0, t0, e16, m2, ta, ma\n\t"
+            "vwredsum.vs v26, v8, v26\n\t"
+            // ===== Block 3 =====
+            "vsetvli x0, t0, e8, m1, ta, ma\n\t"
+            // Load and unpack q4
+            "vle8.v v0, (%[x3_ptr])\n\t"
+            "vand.vi v1, v0, 15\n\t"
+            "vsub.vx v1, v1, %[sub_val]\n\t"
+            "vsrl.vi v2, v0, 4\n\t"
+            "vsub.vx v2, v2, %[sub_val]\n\t"
+            // Load q8 halves
+            "vle8.v v3, (%[y3_lo])\n\t"
+            "vle8.v v4, (%[y3_hi])\n\t"
+            // Widening multiply and accumulate
+            "vwmul.vv v8, v1, v3\n\t"
+            "vwmacc.vv v8, v2, v4\n\t"
+            // Reduce
+            "vsetvli x0, t0, e16, m2, ta, ma\n\t"
+            "vwredsum.vs v27, v8, v27\n\t"
+            
+            // Extract all results
             "vsetvli x0, t0, e32, m1, ta, ma\n\t"
-            "vmv.x.s %[sumi0], v14\n\t"
-            "vmv.x.s %[sumi1], v22\n\t"
-            :  [sumi0] "=r"(sumi[0]),  [sumi1] "=r"(sumi[1])             :  
-              [x0_ptr] "r"(x[ib+0].qs), 
-              [y0_lo_ptr] "r"(y[ib+0].qs),
-              [y0_hi_ptr] "r"(y[ib+0].qs + 16),  
-              [x1_ptr] "r"(x[ib+1].qs), 
-              [y1_lo_ptr] "r"(y[ib+1].qs),
-              [y1_hi_ptr] "r"(y[ib+1].qs + 16) ,
+            "vmv.x.s %[s0], v24\n\t"
+            "vmv.x.s %[s1], v25\n\t"
+            "vmv.x.s %[s2], v26\n\t"
+            "vmv.x.s %[s3], v27\n\t"
+            
+            : [s0] "=r"(sumi[0]), [s1] "=r"(sumi[1]), [s2] "=r"(sumi[2]), [s3] "=r"(sumi[3])            : [x0_ptr] "r"(x[ib+0].qs), [y0_lo] "r"(y[ib+0].qs), [y0_hi] "r"(y[ib+0].qs + 16), [x1_ptr] "r"(x[ib+1].qs), [y1_lo] "r"(y[ib+1].qs), [y1_hi] "r"(y[ib+1].qs + 16), [x2_ptr] "r"(x[ib+2].qs), [y2_lo] "r"(y[ib+2].qs), [y2_hi] "r"(y[ib+2].qs + 16), [x3_ptr] "r"(x[ib+3].qs), [y3_lo] "r"(y[ib+3].qs), [y3_hi] "r"(y[ib+3].qs + 16),
               [sub_val] "r"(8)
-            :               "t0", "memory", "memory", "t0", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v8", "v9");
+            : "t0", "memory", "v0", "v1", "v2", "v24", "v25", "v26", "v27", "v3", "v4", "v8", "v9"        );
         
         sumf += (float)sumi[0] * (GGML_CPU_FP16_TO_FP32(x[ib+0].d) * GGML_CPU_FP16_TO_FP32(y[ib+0].d));
         sumf += (float)sumi[1] * (GGML_CPU_FP16_TO_FP32(x[ib+1].d) * GGML_CPU_FP16_TO_FP32(y[ib+1].d));
+        sumf += (float)sumi[2] * (GGML_CPU_FP16_TO_FP32(x[ib+2].d) * GGML_CPU_FP16_TO_FP32(y[ib+2].d));
+        sumf += (float)sumi[3] * (GGML_CPU_FP16_TO_FP32(x[ib+3].d) * GGML_CPU_FP16_TO_FP32(y[ib+3].d));
     }
-
+    
     // Tail loop
     for (; ib < nb; ++ib) {
-        process_single_block_q4_q8_asm_ggml_vec_dot_q4_0_q8_0_asm_unroll2_interleaved(&x[ib], &y[ib], &sumf);
+        int32_t sumi;
+        asm volatile(
+            "li t0, 16\n\t"
+            "vsetvli x0, t0, e8, m1, ta, ma\n\t"
+            "vle8.v v0, (%[x_ptr])\n\t"
+            "vand.vi v1, v0, 15\n\t"
+            "vsub.vx v1, v1, %[sub_val]\n\t"
+            "vsrl.vi v2, v0, 4\n\t"
+            "vsub.vx v2, v2, %[sub_val]\n\t"
+            "vle8.v v3, (%[y_lo])\n\t"
+            "vle8.v v4, (%[y_hi])\n\t"
+            "vwmul.vv v8, v1, v3\n\t"
+            "vwmacc.vv v8, v2, v4\n\t"
+            "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+            "vmv.s.x v16, x0\n\t"
+            "vsetvli x0, t0, e16, m2, ta, ma\n\t"
+            "vwredsum.vs v16, v8, v16\n\t"
+            "vsetvli x0, t0, e32, m1, ta, ma\n\t"
+            "vmv.x.s %[sumi], v16\n\t"
+            : [sumi] "=r"(sumi)
+            : [x_ptr] "r"(x[ib].qs), [y_lo] "r"(y[ib].qs), [y_hi] "r"(y[ib].qs + 16),
+              [sub_val] "r"(8)
+            : "t0", "memory", "v0", "v1", "v2", "v3", "v4", "v8", "v9", "v16"
+        );
+        sumf += (float)sumi * (GGML_CPU_FP16_TO_FP32(x[ib].d) * GGML_CPU_FP16_TO_FP32(y[ib].d));
     }
+    
     *s = sumf;
 #else
     ggml_vec_dot_q4_0_q8_0_generic(n, s, bs, vx, bx, vy, by, nrc);
