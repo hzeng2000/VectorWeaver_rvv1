@@ -257,6 +257,33 @@ void ggml_vec_silu_f32(const int n, float * y, const float * x) {
     }
 }
 
+// Helper for tail processing - RVV 1.0 版本
+static inline void process_swiglu_tail_asm_fast_ggml_vec_swiglu_f32_baseline(float* y, const float* x, const float* g, size_t vl) {
+    const float exp_alpha_f = 12102203.0f;
+    const int32_t exp_bias_i  = 1065353216;
+    const float one_f = 1.0f;
+    asm volatile (
+        "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
+        "vle32.v v8, (%[x_ptr])\n\t"
+        "vle32.v v11, (%[g_ptr])\n\t"
+        "vfneg.v v9, v8\n\t"
+        "vfmax.vf v9, v9, %[clamp_min]\n\t"
+        "vfmin.vf v9, v9, %[clamp_max]\n\t"
+        "vfmul.vf v9, v9, %[exp_alpha]\n\t"
+        "vfcvt.x.f.v v10, v9\n\t"
+        "vadd.vx v10, v10, %[exp_bias]\n\t"
+        "vfadd.vf v9, v10, %[one]\n\t"
+        "vfdiv.vv v8, v8, v9\n\t"
+        // Multiply by gate
+        "vfmul.vv v8, v8, v11\n\t"
+        "vse32.v v8, (%[y_ptr])\n\t"
+        : : [x_ptr] "r"(x), [g_ptr] "r"(g), [y_ptr] "r"(y), [vl] "r"(vl),
+          [clamp_min] "f"(-87.3f), [clamp_max] "f"(88.7f),
+          [exp_alpha] "f"(exp_alpha_f), [exp_bias] "r"(exp_bias_i), [one] "f"(one_f)
+        : "t0", "memory", "v8", "v9", "v10", "v11"
+    );
+}
+
 void ggml_vec_swiglu_f32(const int n, float * y, const float * x, const float * g) {
     int i = 0;
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
@@ -276,26 +303,64 @@ void ggml_vec_swiglu_f32(const int n, float * y, const float * x, const float * 
         vst1q_f32(y + i, vmulq_f32(ggml_v_silu(vld1q_f32(x + i)), vld1q_f32(g + i)));
     }
 #elif defined(__RVV_SILU_VEC)
-    for (; i < n; ) {
+    const float exp_alpha_f = 12102203.0f;
+    const int32_t exp_bias_i  = 1065353216;
+    const float one_f = 1.0f;
+    
+    while (i < n) {
         size_t vl = __riscv_vsetvl_e32m1(n - i);
-        vfloat32m1_t vx = __riscv_vle32_v_f32m1(x + i, vl);
-        vfloat32m1_t vg = __riscv_vle32_v_f32m1(g + i, vl);
-        vfloat32m1_t vneg_x = __riscv_vfneg_v_f32m1(vx, vl);
-        vfloat32m1_t vz_clamped = __riscv_vfmax_vf_f32m1(vneg_x, -87.3f, vl);
-        vz_clamped = __riscv_vfmin_vf_f32m1(vz_clamped, 88.7f, vl);
-        const float exp_alpha_f = 12102203.0f;
-        const int32_t exp_bias_i  = 1065353216;
-        vfloat32m1_t vscaled_z = __riscv_vfmul_vf_f32m1(vz_clamped, exp_alpha_f, vl);
-        vint32m1_t vint_z = __riscv_vfcvt_x_f_v_i32m1(vscaled_z, vl);
-        vint32m1_t vexp_int = __riscv_vadd_vx_i32m1(vint_z, exp_bias_i, vl);
-        vfloat32m1_t vexp_val = __riscv_vreinterpret_v_i32m1_f32m1(vexp_int);
-        const float one_f = 1.0f;
-        vfloat32m1_t vden = __riscv_vfadd_vf_f32m1(vexp_val, one_f, vl);
-        vfloat32m1_t vsilu = __riscv_vfdiv_vv_f32m1(vx, vden, vl);
-        // Multiply by gate
-        vfloat32m1_t vy = __riscv_vfmul_vv_f32m1(vsilu, vg, vl);
-        __riscv_vse32_v_f32m1(y + i, vy, vl);
-        i += vl;
+        
+        // Check if we can process `ur` full chunks
+        bool can_unroll = true;
+        for (int j=1; j < 1; ++j) {
+            if (vl * j >= (size_t)(n-i)) {
+                can_unroll = false;
+                break;
+            }
+        }
+        
+        // If unroll_factor is 1, we can't unroll, so this block is effectively disabled.
+        // We add a `false` condition to make the C++ compiler optimize it away.
+        if (false) {
+            size_t vl_bytes = vl * 4;
+            asm volatile (
+                    // --- Load one chunk (x and g) ---
+                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
+                    "vle32.v v8, (%[x_ptr])\n\t"
+                    "vle32.v v11, (%[g_ptr])\n\t"
+                    "add %[x_ptr], %[x_ptr], %[vl_bytes]\n\t"
+                    "add %[g_ptr], %[g_ptr], %[vl_bytes]\n\t"
+
+                    // --- Compute silu for one chunk ---
+                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
+                    "vfneg.v v9, v8\n\t"
+                    "vfmax.vf v9, v9, %[clamp_min]\n\t"
+                    "vfmin.vf v9, v9, %[clamp_max]\n\t"
+                    "vfmul.vf v9, v9, %[exp_alpha]\n\t"
+                    "vfcvt.x.f.v v10, v9\n\t"
+                    "vadd.vx v10, v10, %[exp_bias]\n\t"
+                    "vfadd.vf v9, v10, %[one]\n\t"
+                    "vfdiv.vv v8, v8, v9\n\t"
+                    // Multiply by gate
+                    "vfmul.vv v8, v8, v11\n\t"
+
+                    // --- Store one chunk ---
+                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
+                    "vse32.v v8, (%[y_ptr])\n\t"
+                    "add %[y_ptr], %[y_ptr], %[vl_bytes]\n\t"
+
+
+                : [x_ptr] "+r"(x), [g_ptr] "+r"(g), [y_ptr] "+r"(y)
+                : [vl] "r"(vl), [vl_bytes] "r"(vl_bytes),
+                  [clamp_min] "f"(-87.3f), [clamp_max] "f"(88.7f),
+                  [exp_alpha] "f"(exp_alpha_f), [exp_bias] "r"(exp_bias_i), [one] "f"(one_f)
+                : "memory", "t0", "v10", "v11", "v8", "v9"            );
+            i += vl * 1;
+        } else {
+            // Process remaining tail or single chunk
+            process_swiglu_tail_asm_fast_ggml_vec_swiglu_f32_baseline(y + i, x + i, g + i, vl);
+            i += vl;
+        }
     }
 #endif
     for (; i < n; ++i) {
