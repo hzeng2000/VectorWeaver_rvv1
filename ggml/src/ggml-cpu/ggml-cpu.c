@@ -1131,31 +1131,31 @@ static void ggml_compute_forward_mul_mat_one_chunk(
 
     // ★★★ START OF MODIFICATION ★★★
 
-    ggml_vec_dot_t vec_dot; // Declare the function pointer.
-    const int64_t DECODE_KERNEL_THRESHOLD = 4;
+    // ggml_vec_dot_t vec_dot; // Declare the function pointer.
+    // const int64_t DECODE_KERNEL_THRESHOLD = 4;
 
-    if (type == GGML_TYPE_Q8_0) {
-        // 第一重判断：是否处于 Decode 阶段？
-        // if (!(params->is_prefill && ne01 <= DECODE_KERNEL_THRESHOLD)) {
-        if (!(params->is_prefill)) {
-            vec_dot = (ggml_vec_dot_t)ggml_vec_dot_q8_0_q8_0_decode;
-        }
-        else {
-            vec_dot = (ggml_vec_dot_t)ggml_vec_dot_q8_0_q8_0; // 其他所有情况，包括Prefill阶段，或者Decode阶段但矩阵很大
-        }
+    // if (type == GGML_TYPE_Q8_0) {
+    //     // 第一重判断：是否处于 Decode 阶段？
+    //     // if (!(params->is_prefill && ne01 <= DECODE_KERNEL_THRESHOLD)) {
+    //     if (!(params->is_prefill)) {
+    //         vec_dot = (ggml_vec_dot_t)ggml_vec_dot_q8_0_q8_0_decode;
+    //     }
+    //     else {
+    //         vec_dot = (ggml_vec_dot_t)ggml_vec_dot_q8_0_q8_0; // 其他所有情况，包括Prefill阶段，或者Decode阶段但矩阵很大
+    //     }
 
-        // 可以保留您的日志来验证选择是否符合预期
-        // printf("ne01 = %ld, is_prefill = %s, kernel = %s\n",
-        //        ne01,
-        //        params->is_prefill ? "true" : "false",
-        //        use_decode_kernel ? "decode" : "prefill");
-    } else {
-        vec_dot = type_traits_cpu[type].vec_dot;
-    }
+    //     // 可以保留您的日志来验证选择是否符合预期
+    //     // printf("ne01 = %ld, is_prefill = %s, kernel = %s\n",
+    //     //        ne01,
+    //     //        params->is_prefill ? "true" : "false",
+    //     //        use_decode_kernel ? "decode" : "prefill");
+    // } else {
+    //     vec_dot = type_traits_cpu[type].vec_dot;
+    // }
 
     // ★★★ END OF MODIFICATION ★★★
 
-    // ggml_vec_dot_t const vec_dot      = type_traits_cpu[type].vec_dot;
+    ggml_vec_dot_t const vec_dot      = type_traits_cpu[type].vec_dot;
     enum ggml_type const vec_dot_type = type_traits_cpu[type].vec_dot_type;
 
     // broadcast factors
