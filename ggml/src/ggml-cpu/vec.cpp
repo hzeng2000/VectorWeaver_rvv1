@@ -258,7 +258,7 @@ void ggml_vec_silu_f32(const int n, float * y, const float * x) {
 }
 
 // Helper for tail processing - RVV 1.0 版本
-static inline void process_swiglu_tail_asm_fast_ggml_vec_swiglu_f32_asm_unroll4(float* y, const float* x, const float* g, size_t vl) {
+static inline void process_swiglu_tail_asm_fast_ggml_vec_swiglu_f32_asm_unroll4_interleaved(float* y, const float* x, const float* g, size_t vl) {
     const float exp_alpha_f = 12102203.0f;
     const int32_t exp_bias_i  = 1065353216;
     const float one_f = 1.0f;
@@ -322,14 +322,29 @@ void ggml_vec_swiglu_f32(const int n, float * y, const float * x, const float * 
         if (can_unroll) {
             size_t vl_bytes = vl * 4;
             asm volatile (
-                    // --- Load one chunk (x and g) ---
+                    // --- Load all chunks (x and g) ---
                     "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
                     "vle32.v v8, (%[x_ptr])\n\t"
                     "vle32.v v11, (%[g_ptr])\n\t"
                     "add %[x_ptr], %[x_ptr], %[vl_bytes]\n\t"
                     "add %[g_ptr], %[g_ptr], %[vl_bytes]\n\t"
-
-                    // --- Compute silu for one chunk ---
+                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
+                    "vle32.v v12, (%[x_ptr])\n\t"
+                    "vle32.v v15, (%[g_ptr])\n\t"
+                    "add %[x_ptr], %[x_ptr], %[vl_bytes]\n\t"
+                    "add %[g_ptr], %[g_ptr], %[vl_bytes]\n\t"
+                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
+                    "vle32.v v16, (%[x_ptr])\n\t"
+                    "vle32.v v19, (%[g_ptr])\n\t"
+                    "add %[x_ptr], %[x_ptr], %[vl_bytes]\n\t"
+                    "add %[g_ptr], %[g_ptr], %[vl_bytes]\n\t"
+                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
+                    "vle32.v v20, (%[x_ptr])\n\t"
+                    "vle32.v v23, (%[g_ptr])\n\t"
+                    "add %[x_ptr], %[x_ptr], %[vl_bytes]\n\t"
+                    "add %[g_ptr], %[g_ptr], %[vl_bytes]\n\t"
+                    
+                    // --- Compute silu for all chunks ---
                     "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
                     "vfneg.v v9, v8\n\t"
                     "vfmax.vf v9, v9, %[clamp_min]\n\t"
@@ -341,20 +356,6 @@ void ggml_vec_swiglu_f32(const int n, float * y, const float * x, const float * 
                     "vfdiv.vv v8, v8, v9\n\t"
                     // Multiply by gate
                     "vfmul.vv v8, v8, v11\n\t"
-
-                    // --- Store one chunk ---
-                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
-                    "vse32.v v8, (%[y_ptr])\n\t"
-                    "add %[y_ptr], %[y_ptr], %[vl_bytes]\n\t"
-
-                    // --- Load one chunk (x and g) ---
-                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
-                    "vle32.v v12, (%[x_ptr])\n\t"
-                    "vle32.v v15, (%[g_ptr])\n\t"
-                    "add %[x_ptr], %[x_ptr], %[vl_bytes]\n\t"
-                    "add %[g_ptr], %[g_ptr], %[vl_bytes]\n\t"
-
-                    // --- Compute silu for one chunk ---
                     "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
                     "vfneg.v v13, v12\n\t"
                     "vfmax.vf v13, v13, %[clamp_min]\n\t"
@@ -366,20 +367,6 @@ void ggml_vec_swiglu_f32(const int n, float * y, const float * x, const float * 
                     "vfdiv.vv v12, v12, v13\n\t"
                     // Multiply by gate
                     "vfmul.vv v12, v12, v15\n\t"
-
-                    // --- Store one chunk ---
-                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
-                    "vse32.v v12, (%[y_ptr])\n\t"
-                    "add %[y_ptr], %[y_ptr], %[vl_bytes]\n\t"
-
-                    // --- Load one chunk (x and g) ---
-                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
-                    "vle32.v v16, (%[x_ptr])\n\t"
-                    "vle32.v v19, (%[g_ptr])\n\t"
-                    "add %[x_ptr], %[x_ptr], %[vl_bytes]\n\t"
-                    "add %[g_ptr], %[g_ptr], %[vl_bytes]\n\t"
-
-                    // --- Compute silu for one chunk ---
                     "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
                     "vfneg.v v17, v16\n\t"
                     "vfmax.vf v17, v17, %[clamp_min]\n\t"
@@ -391,20 +378,6 @@ void ggml_vec_swiglu_f32(const int n, float * y, const float * x, const float * 
                     "vfdiv.vv v16, v16, v17\n\t"
                     // Multiply by gate
                     "vfmul.vv v16, v16, v19\n\t"
-
-                    // --- Store one chunk ---
-                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
-                    "vse32.v v16, (%[y_ptr])\n\t"
-                    "add %[y_ptr], %[y_ptr], %[vl_bytes]\n\t"
-
-                    // --- Load one chunk (x and g) ---
-                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
-                    "vle32.v v20, (%[x_ptr])\n\t"
-                    "vle32.v v23, (%[g_ptr])\n\t"
-                    "add %[x_ptr], %[x_ptr], %[vl_bytes]\n\t"
-                    "add %[g_ptr], %[g_ptr], %[vl_bytes]\n\t"
-
-                    // --- Compute silu for one chunk ---
                     "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
                     "vfneg.v v21, v20\n\t"
                     "vfmax.vf v21, v21, %[clamp_min]\n\t"
@@ -416,12 +389,20 @@ void ggml_vec_swiglu_f32(const int n, float * y, const float * x, const float * 
                     "vfdiv.vv v20, v20, v21\n\t"
                     // Multiply by gate
                     "vfmul.vv v20, v20, v23\n\t"
-
-                    // --- Store one chunk ---
+                    
+                    // --- Store all chunks ---
+                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
+                    "vse32.v v8, (%[y_ptr])\n\t"
+                    "add %[y_ptr], %[y_ptr], %[vl_bytes]\n\t"
+                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
+                    "vse32.v v12, (%[y_ptr])\n\t"
+                    "add %[y_ptr], %[y_ptr], %[vl_bytes]\n\t"
+                    "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
+                    "vse32.v v16, (%[y_ptr])\n\t"
+                    "add %[y_ptr], %[y_ptr], %[vl_bytes]\n\t"
                     "vsetvli x0, %[vl], e32, m1, ta, ma\n\t"
                     "vse32.v v20, (%[y_ptr])\n\t"
                     "add %[y_ptr], %[y_ptr], %[vl_bytes]\n\t"
-
 
                 : [x_ptr] "+r"(x), [g_ptr] "+r"(g), [y_ptr] "+r"(y)
                 : [vl] "r"(vl), [vl_bytes] "r"(vl_bytes),
@@ -431,7 +412,7 @@ void ggml_vec_swiglu_f32(const int n, float * y, const float * x, const float * 
             i += vl * 4;
         } else {
             // Process remaining tail or single chunk
-            process_swiglu_tail_asm_fast_ggml_vec_swiglu_f32_asm_unroll4(y + i, x + i, g + i, vl);
+            process_swiglu_tail_asm_fast_ggml_vec_swiglu_f32_asm_unroll4_interleaved(y + i, x + i, g + i, vl);
             i += vl;
         }
     }
