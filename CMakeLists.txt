@@ -16,6 +16,10 @@ if (__RVV_ASM_STD)
     message(STATUS "Using inlined RVV assemble for XThead")
     add_compile_definitions(__RVV_ASM_STD)
 endif()
+if (__RVV_SILU_VEC)
+    message(STATUS "Using inlined RVV assemble for SiLU")
+    add_compile_definitions(__RVV_SILU_VEC)
+endif()
 
 message("CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 
